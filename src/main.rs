@@ -6,12 +6,13 @@
 //! if present, purely as a convenience.)
 
 mod bashtools;
+mod input;
 mod librarian;
 mod tools;
 
 use std::{
     future::IntoFuture,
-    io::{self, BufRead, Write},
+    io::Write,
 };
 
 use librarian::Mode;
@@ -39,7 +40,9 @@ Just talk. Commands (or plain phrases like \"author mode\" / \"retrieval mode\")
   /key <api key>     use this key for the current model's vendor (kept in memory only)
   /forget            clear the conversation memory (the wiki is untouched)
   /help, /quit
-Ctrl-C interrupts the librarian mid-task.";
+Multi-line: just paste, then press Enter on an empty line to send. To type several
+lines by hand, start and end the message with a line containing only \"\"\".
+Ctrl-C interrupts the librarian mid-task, discards a draft, or quits at an empty prompt.";
 
 struct Session {
     sandbox: Sandbox,
@@ -123,16 +126,6 @@ fn natural_mode_switch(line: &str) -> Option<Mode> {
 
 fn say(text: &str) {
     println!("\x1b[1;36mlibrarian\x1b[0m {text}");
-}
-
-fn read_line(prompt: &str) -> Option<String> {
-    print!("{prompt}");
-    io::stdout().flush().ok()?;
-    let mut line = String::new();
-    match io::stdin().lock().read_line(&mut line) {
-        Ok(0) | Err(_) => None,
-        Ok(_) => Some(line.trim_end().to_string()),
-    }
 }
 
 /// Handles a chat command. Returns false when the user wants to quit.
@@ -258,23 +251,32 @@ async fn main() {
         say("No API key found. Pick a model with /model vendor/id and give its key with /key <api key>.");
     }
 
-    while let Some(line) = read_line(&format!("\x1b[1;33m{}›\x1b[0m ", session.mode.label())) {
-        let line = line.trim();
-        if line.is_empty() {
+    let mut input = input::Input::spawn();
+    loop {
+        let prompt = format!("\x1b[1;33m{}›\x1b[0m ", session.mode.label());
+        let message = match input.next(&prompt).await {
+            input::Read::Message(m) => m,
+            input::Read::Discarded => continue,
+            input::Read::Quit => break,
+        };
+        if message.is_empty() {
             continue;
         }
-        if line.starts_with('/') {
-            if !command(&mut session, line) {
-                break;
+        // Commands and mode phrases only count as a single line; a pasted
+        // lump that happens to start with '/' is just text.
+        if !message.contains('\n') {
+            if message.starts_with('/') {
+                if !command(&mut session, &message) {
+                    break;
+                }
+                continue;
             }
-            continue;
+            if let Some(mode) = natural_mode_switch(&message) {
+                command(&mut session, if mode == Mode::Author { "/author" } else { "/ask" });
+                continue;
+            }
         }
-        if let Some(mode) = natural_mode_switch(line) {
-            command(&mut session, if mode == Mode::Author { "/author" } else { "/ask" });
-            continue;
-        }
-        turn(&mut session, line).await;
+        turn(&mut session, &message).await;
     }
     say("Goodbye — the wiki is in ./data/library.");
 }
-
