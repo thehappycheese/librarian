@@ -5,6 +5,8 @@ edition = "2024"
 rust-version = "1.97.1"
 
 [dependencies]
+bm25 = "2.3"
+regex = "1.13.2"
 rig-agent = "0.46"
 rig-core = { version = "0.46", features = ["reqwest"] }
 serde = { version = "1.0.229", features = ["derive"] }
